@@ -1,0 +1,37 @@
+{
+  "manifest_version": 2,
+  "id": "local.multica",
+  "version": "1.6.1",
+  "name": "Multica 任务桥接",
+  "description": "将完整文字、图片及普通文件交付到原QQ会话，凭平台成功回执收尾。",
+  "author": {
+    "name": "multica_cli_bridge contributors",
+    "url": "https://github.com/flakedZZ/multica_cli_bridge"
+  },
+  "urls": {
+    "repository": "https://github.com/flakedZZ/multica_cli_bridge"
+  },
+  "license": "MIT",
+  "host_application": {
+    "min_version": "1.4.1",
+    "max_version": "1.4.99"
+  },
+  "sdk": {
+    "min_version": "2.21.0",
+    "max_version": "2.99.99"
+  },
+  "capabilities": [
+    "send.text",
+    "send.image",
+    "message.get_recent",
+    "message.get_by_id",
+    "message.get_by_time_in_chat",
+    "files.download",
+    "maisaka.proactive.trigger",
+    "api.call",
+    "chat.get_all_streams"
+  ],
+  "i18n": {
+    "default_locale": "zh-CN"
+  }
+}

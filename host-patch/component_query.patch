@@ -1,0 +1,16 @@
+--- a/src/plugin_runtime/component_query.py
++++ b/src/plugin_runtime/component_query.py
+@@ -615,6 +615,13 @@
+         for key, value in context_payload.items():
+             if key not in payload or not payload.get(key):
+                 payload[key] = value
++        if invocation.tool_name == "multica_mika":
++            # local.multica: reserved identity always comes from the host,
++            # including empty values. Model arguments cannot supply a fallback.
++            trusted = {key: str(context_payload.get(key) or "")
++                       for key in ("stream_id", "user_id", "platform")}
++            payload.update(trusted)
++            payload["_multica_context"] = trusted
+         if legacy_action:
+             # 旧插件通过 action_data 接收业务参数，通过 chat_id 定位聊天流。
+             stream_id = str(context_payload.get("stream_id") or invocation.stream_id).strip()

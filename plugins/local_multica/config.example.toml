@@ -1,0 +1,20 @@
+[plugin]
+enabled = true
+config_version = "1.6.1"
+
+[bridge]
+url = "http://host.docker.internal:18765"
+token_file = "/MaiMBot/data/plugins/local.multica/bridge.token"
+allowed_users = []
+poll_seconds = 20
+
+[routing]
+mode = "complex"
+auto_return_images = true
+
+[closure]
+enabled = true
+
+[delivery]
+poll_seconds = 20
+max_failures = 5

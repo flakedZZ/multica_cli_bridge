@@ -1,0 +1,15 @@
+{
+  "cli_path": "C:/tools/multica.exe",
+  "profile": "",
+  "workspace_id": "<WORKSPACE_UUID>",
+  "project_id": "<PROJECT_UUID>",
+  "assignee_id": "<EXECUTION_AGENT_UUID>",
+  "allowed_users": [],
+  "token_file": "bridge.token",
+  "state_dir": "state",
+  "cli_timeout": 8,
+  "max_submissions_per_hour": 5,
+  "mika_id": "<PLANNING_AGENT_UUID>",
+  "max_discussions_per_hour": 10,
+  "allow_direct_submit": false
+}

@@ -122,6 +122,49 @@ class DialogueTests(unittest.TestCase):
         self.assertEqual(self.cli.created, 2)
         self.assertIn("DEMO-21", self.call(operation="list")["text"])
 
+    def test_omitted_dialogue_id_resolves_reviewed_version_and_reuses_execution(self):
+        plan = self.proposal()
+        args = dict(operation="confirm_plan", version=plan["version"], review="符合原请求")
+        for _ in range(2):
+            self.assertEqual(self.call(**args)["issue_id"], EXECUTION)
+            self.service = Service(self.settings, self.cli)
+        self.assertEqual(self.cli.created, 2)
+        self.assertEqual(self.cli.calls[-1], ["issue", "get", DISCUSSION])
+
+    def test_version_resolution_never_crosses_owner_session_or_guesses_latest(self):
+        plan = self.proposal()
+        args = dict(operation="confirm_plan", version=plan["version"], review="符合原请求")
+        for change in ({"user_id": "67890"}, {"session_id": "other"}, {"version": "stale"},
+                       {"dialogue_id": "wrong"}, {"dialogue_id": None}):
+            with self.subTest(change=change), self.assertRaises(BridgeError):
+                self.call(**{**args, **change})
+        self.assertEqual(self.cli.created, 1)
+        with self.service.connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM requests").fetchone()[0], 0)
+
+    def test_version_resolution_rejects_ambiguous_mapping(self):
+        plan = self.proposal()
+        with self.service.connect() as db:
+            db.execute("INSERT INTO dialogues (id,user_id,session_id,current_turn,state,version) "
+                       "VALUES ('duplicate','12345','room','other','proposal',?)", (plan["version"],))
+        with self.assertRaisesRegex(BridgeError, "无法唯一定位"):
+            self.call(operation="confirm_plan", version=plan["version"], review="approved")
+        self.assertEqual(self.cli.created, 1)
+
+    def test_version_resolution_still_requires_review_and_refuses_uncertain_retry(self):
+        plan = self.proposal()
+        args = dict(operation="confirm_plan", version=plan["version"])
+        with self.assertRaisesRegex(BridgeError, "审核意见"):
+            self.call(**args, review="")
+        self.cli.fail = True
+        with self.assertRaisesRegex(BridgeError, "结果未确认"):
+            self.call(**args, review="approved")
+        calls = len(self.cli.calls)
+        self.service = Service(self.settings, self.cli)
+        with self.assertRaisesRegex(BridgeError, "尚无可确认"):
+            self.call(**args, review="approved")
+        self.assertEqual(len(self.cli.calls), calls)
+
     def test_question_cannot_be_confirmed(self):
         conversation = self.call()["dialogue_id"]
         self.reply(conversation, state="question")

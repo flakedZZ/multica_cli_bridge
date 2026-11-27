@@ -5,6 +5,8 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import json
+import runpy
+import warnings
 import subprocess
 import sys
 import threading
@@ -237,6 +239,34 @@ class BridgeTests(unittest.TestCase):
                 parse(text)
         with self.assertRaisesRegex(ClientError, "HTTPS"):
             request("http://example.com", "missing.token", {})
+
+    def test_module_entrypoint_returns_validation_error_over_http(self):
+        # -m executes server under a second module name. The old lazy import
+        # in Dialogue raised a different BridgeError and became HTTP 500.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            entry = runpy.run_module("bridge.server", run_name="test_entrypoint")
+        service = entry["Service"](self.settings, self.cli)
+        server = entry["Server"](("127.0.0.1", 0), service)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            body = {**self.body, "operation": "plan", "dialogue_id": ""}
+            req = Request(f"http://127.0.0.1:{server.server_port}/v1/request",
+                          data=json.dumps(body).encode(),
+                          headers={"Authorization": "Bearer " + self.settings.token,
+                                   "Content-Type": "application/json"})
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(req, timeout=5)
+            with caught.exception as error:
+                self.assertEqual(error.code, 400)
+                self.assertIn("dialogue_id", json.loads(error.read())["error"])
+            self.assertFalse(service.lock.locked())
+            self.assertEqual(self.cli.calls, [])
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
 
     def test_health_checks_project_access_without_writing(self):
         with patch.object(self.cli, "run", return_value={"id": PROJECT}) as call:

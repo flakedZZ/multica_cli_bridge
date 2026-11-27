@@ -9,6 +9,7 @@ import re
 import tempfile
 import time
 from .uploads import decode_attachments
+from .validation import field
 
 
 def digest(value: Any) -> str:
@@ -84,11 +85,23 @@ class Dialogue:
         return result
 
     def handle(self, body: Dict[str, Any], user: str, session: str) -> Dict[str, Any]:
-        from .server import field
         operation = body["operation"]
         if operation == "discuss":
             return self.discuss(body, user, session)
-        row = self.owned(field(body, "dialogue_id"), user, session)
+        # The version binds a reviewed plan to one dialogue. Some tool callers
+        # omit dialogue_id; never guess from the latest chat or another owner.
+        if operation == "confirm_plan" and body.get("dialogue_id", "") == "":
+            version = field(body, "version")
+            with self.service.connect() as db:
+                matches = db.execute(
+                    "SELECT * FROM dialogues WHERE user_id=? AND session_id=? AND version=? LIMIT 2",
+                    (user, session, version)).fetchall()
+            if len(matches) != 1:
+                raise self.error("无法唯一定位当前方案，请携带原dialogue_id和最新version；不要重新创建讨论",
+                                 409, "dialogue_resolution_failed")
+            row = matches[0]
+        else:
+            row = self.owned(field(body, "dialogue_id"), user, session)
         if operation == "plan":
             return self.refresh(row)
         if operation == "cancel_plan":
@@ -111,7 +124,6 @@ class Dialogue:
             return self.service.cli.run(command)
 
     def discuss(self, body: Dict[str, Any], user: str, session: str) -> Dict[str, Any]:
-        from .server import field
         message = field(body, "message", 10000)
         source = field(body, "message_id")
         attachments = decode_attachments(body.get("attachments", []), self.error)
@@ -205,7 +217,6 @@ class Dialogue:
         return result
 
     def validate(self, plan: Any, turn: str) -> None:
-        from .server import field
         if not isinstance(plan, dict) or plan.get("turn_id") != turn or plan.get("state") not in {"question", "proposal"}:
             raise ValueError("wrong round or state")
         field(plan, "reply", 3000)

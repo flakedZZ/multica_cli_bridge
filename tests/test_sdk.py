@@ -115,6 +115,31 @@ class SdkTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("由你确认", plugin.ctx.maisaka.proactive.trigger.call_args.args[1])
         self.assertEqual(plugin.pending, {})
 
+    async def test_confirm_without_dialogue_id_tracks_delivery_and_replays_once(self):
+        import test_dialogue as fixtures
+        f = fixtures.DialogueTests()
+        f.setUp()
+        self.addCleanup(f.doCleanups)
+        plan = f.proposal()
+        plugin = self.plugin()
+        plugin.ctx.message.get_by_id.return_value = self.origin()
+        with patch("plugins.local_multica.plugin.request",
+                   side_effect=lambda _url, _token, body: f.service.handle(body)):
+            for _ in range(2):
+                result = await plugin.multica_mika(
+                    "confirm", request_message_id="msg", version=plan["version"],
+                    review="符合原需求，可执行", task_type="image", stream_id="room")
+                self.assertTrue(result["success"], result)
+                self.assertEqual(json.loads(result["content"])["reference"], "DEMO-21")
+                f.service = fixtures.Service(f.settings, f.cli)
+        self.assertEqual(f.cli.created, 2)
+        self.assertEqual(len(plugin.jobs), 1)
+        job = next(iter(plugin.jobs.values()))
+        self.assertEqual((job["reference"], job["task_type"], job["notify"]), ("DEMO-21", "image", True))
+        saved = json.loads((plugin.ctx.paths.data_dir / "execution_pending.json").read_text())
+        self.assertEqual(saved, plugin.jobs)
+        plugin.ctx.send.image.assert_not_awaited()
+
     async def test_new_round_cannot_be_woken_by_old_poll(self):
         plugin = self.plugin()
         payload = {"session_id": "room", "user_id": "12345", "message_id": "msg"}

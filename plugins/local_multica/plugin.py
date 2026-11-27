@@ -440,8 +440,8 @@ class MulticaPlugin(MaiBotPlugin):
                 f"原请求消息完整ID：{pending['message_id']}。"
                 "你是QQ助手，用户直接把任务交给你。你负责在内部审阅方案是否满足原意，不要求用户提到规划Agent。若需关键补充信息，用自然语言询问用户；"
                 "若需调整方案，调用multica_mika(action='discuss', dialogue_id=原讨论ID, message=你的反馈)。"
-                "只有state=proposal且你已经核对范围、步骤和验收条件后，才调用confirm，带原样version和review审核意见。"
-                "这是由你确认，不强制用户输入格式化命令。涉及新增支出、部署、对外发送等超出原授权的内容应先向用户确认。"
+                "只有state=proposal且你已经核对范围、步骤和验收条件后，才调用confirm，带原样dialogue_id、version和review审核意见。"
+                "这是由你确认的QQbot内部审核，需求明确且在原授权内就接续执行，无需用户再次确认。涉及新增支出、部署、对外发送等超出原授权的内容应先向用户确认。"
                 "确认前不得声称执行任务已经提交。confirm成功后自然语言告知进度，图片和结果由插件自动回传，勿重复发送图片。"
                 "若state=uncertain则告诉用户待管理员核对，不要重新创建。"
             )
@@ -495,7 +495,7 @@ class MulticaPlugin(MaiBotPlugin):
                                 enum_values=["requests", "history", "discuss", "plan", "confirm", "cancel", "status", "result", "settings", "configure"]),
               ToolParameterInfo(name="request_message_id", param_type=ToolParamType.STRING, default="", required=False, description="真实用户消息ID；status/result/history有可信宿主身份时可省略，否则可用本人当前查询消息，不必找最初请求；其他操作除requests外必填"),
               ToolParameterInfo(name="message", param_type=ToolParamType.STRING, default="", required=False, description="对规划Agent的自然语言需求或方案修改意见"),
-              ToolParameterInfo(name="dialogue_id", param_type=ToolParamType.STRING, default="", required=False, description="首次discuss留空；后续带原讨论ID"),
+              ToolParameterInfo(name="dialogue_id", param_type=ToolParamType.STRING, default="", required=False, description="首次discuss留空；plan/confirm/cancel及后续discuss带原讨论ID"),
               ToolParameterInfo(name="version", param_type=ToolParamType.STRING, default="", required=False, description="confirm必须原样传回最新方案version"),
               ToolParameterInfo(name="review", param_type=ToolParamType.STRING, default="", required=False, description="QQbot审核方案符合用户意图的理由；confirm必填"),
               ToolParameterInfo(name="reference", param_type=ToolParamType.STRING, default="", required=False, description="status/result使用已提交执行任务的编号"),

@@ -488,14 +488,15 @@ class MulticaPlugin(MaiBotPlugin):
         return {"user_id": user, "session_id": session, "platform": "qq", "message_id": ""}
 
     @Tool("multica_mika", platforms="qq", timeout_ms=300000,
-          description="QQ助手执行用户交办的复杂任务：画图、开发、文档或调研；可转交用户QQ图片/文件。先requests选真实消息，再discuss传需求；审核方案后confirm，插件自动回传结果。用户查询或修改轮询间隔/失败次数时用settings/configure，不创建任务。question不能确认，proposal才可确认。不要将闲聊派单或虚构执行结果。",
+          description="QQ助手执行用户交办的复杂任务：画图、开发、文档或调研；可转交用户QQ图片/文件。先requests选真实消息，再discuss传需求；审核方案后confirm，插件自动回传结果。用户查询或修改轮询间隔/失败次数时用settings/configure，不创建任务。重启后用pending查本人本会话未确认讨论，再plan读取、审核后confirm，勿重建或批量确认。question不能确认，proposal才可确认。不要将闲聊派单或虚构执行结果。",
           parameters=[
               ToolParameterInfo(name="action", param_type=ToolParamType.STRING, required=True,
-                                description="requests/history/discuss/plan/confirm/cancel/status/result/settings/configure",
-                                enum_values=["requests", "history", "discuss", "plan", "confirm", "cancel", "status", "result", "settings", "configure"]),
-              ToolParameterInfo(name="request_message_id", param_type=ToolParamType.STRING, default="", required=False, description="真实用户消息ID；status/result/history有可信宿主身份时可省略，否则可用本人当前查询消息，不必找最初请求；其他操作除requests外必填"),
+                                description="requests/history/pending/discuss/plan/confirm/cancel/status/result/settings/configure",
+                                enum_values=["requests", "history", "pending", "discuss", "plan", "confirm", "cancel", "status", "result", "settings", "configure"]),
+              ToolParameterInfo(name="request_message_id", param_type=ToolParamType.STRING, default="", required=False, description="真实用户消息ID；status/result/history/pending/plan/confirm/cancel有可信宿主身份时可省略，否则可用本人当前查询消息，不必找最初请求；其他操作除requests外必填"),
               ToolParameterInfo(name="message", param_type=ToolParamType.STRING, default="", required=False, description="对规划Agent的自然语言需求或方案修改意见"),
               ToolParameterInfo(name="dialogue_id", param_type=ToolParamType.STRING, default="", required=False, description="首次discuss留空；plan/confirm/cancel及后续discuss带原讨论ID"),
+              ToolParameterInfo(name="cursor", param_type=ToolParamType.STRING, default="", required=False, description="pending分页：首次留空，有has_more时原样传next_cursor继续查询"),
               ToolParameterInfo(name="version", param_type=ToolParamType.STRING, default="", required=False, description="confirm必须原样传回最新方案version"),
               ToolParameterInfo(name="review", param_type=ToolParamType.STRING, default="", required=False, description="QQbot审核方案符合用户意图的理由；confirm必填"),
               ToolParameterInfo(name="reference", param_type=ToolParamType.STRING, default="", required=False, description="status/result使用已提交执行任务的编号"),
@@ -508,7 +509,7 @@ class MulticaPlugin(MaiBotPlugin):
                                 items_schema={"type": "string"}, description="discuss可引用用户同会话的图片/文件消息ID；原请求消息附件自动附带，最多5个附件"),
           ])
     async def multica_mika(self, action: str, request_message_id: str = "", message: str = "", dialogue_id: str = "",
-                           version: str = "", review: str = "", reference: str = "", task_type: str = "",
+                           version: str = "", review: str = "", reference: str = "", task_type: str = "", cursor: str = "",
                            poll_seconds: int = 0, max_failures: int = 0, attachment_message_ids: List[str] = None, **kwargs: Any) -> Dict[str, Any]:
         try:
             context = kwargs.get("_multica_context")
@@ -533,15 +534,15 @@ class MulticaPlugin(MaiBotPlugin):
                         messages.append({"message_id": row["message_id"], "text": str(row.get("processed_plain_text", ""))[:1500],
                                          "attachment_types": [s.get("type") for s in (row.get("raw_message") or []) if isinstance(s, dict) and s.get("type") in {"image", "file"}]})
                 return {"success": True, "content": "仅用于选择实际交办任务的请求，不代表授权所有消息：\n" + json.dumps(messages, ensure_ascii=False)}
-            if action not in {"history", "discuss", "plan", "confirm", "cancel", "status", "result", "settings", "configure"}:
+            if action not in {"history", "pending", "discuss", "plan", "confirm", "cancel", "status", "result", "settings", "configure"}:
                 raise ClientError("未知讨论操作")
-            if action in {"status", "result", "history"}:
+            if action in {"status", "result", "history", "pending", "plan", "confirm", "cancel"}:
                 payload = await self.query_origin(session, request_message_id, context)
             else:
                 payload = await self.origin(session, request_message_id, (action == "discuss" and not dialogue_id) or action == "configure",
                                             str(kwargs.get("user_id") or ""))
-            if action == "history":
-                result = await self.rpc({**payload, "operation": "list"})
+            if action in {"history", "pending"}:
+                result = await self.rpc({**payload, "operation": "list" if action == "history" else "pending", "cursor": cursor})
                 return {"success": True, "content": json.dumps(result, ensure_ascii=False)}
             if action in {"settings", "configure"}:
                 result = await self.polling_command(payload, action, reference, task_type, poll_seconds, max_failures)

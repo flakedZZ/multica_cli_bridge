@@ -68,6 +68,44 @@ class HistoryTests(unittest.IsolatedAsyncioTestCase):
         f.service=dialogue_fixtures.Service(f.settings,f.cli)
         return f
 
+    async def test_pending_recovery_without_original_message_after_restart(self):
+        p = self.plugin()
+        f = dialogue_fixtures.DialogueTests()
+        f.setUp()
+        self.addCleanup(f.doCleanups)
+        conversation = f.call()["dialogue_id"]
+        f.reply(conversation)
+        f.service = dialogue_fixtures.Service(f.settings, f.cli)
+        p.ctx.message.get_by_id.return_value = None
+        p.ctx.message.get_recent.return_value = []
+        with patch("plugins.local_multica.plugin.request", side_effect=lambda _u, _t, b: f.service.handle(b)):
+            listed = await p.multica_mika("pending", **host_payload({}, context()))
+            row = json.loads(listed["content"])["dialogues"][0]
+            plan_result = await p.multica_mika("plan", dialogue_id=row["dialogue_id"], **host_payload({}, context()))
+            plan = json.loads(plan_result["content"])
+            result = await p.multica_mika("confirm", dialogue_id=conversation,
+                                          version=plan["version"], review="符合原任务", task_type="image",
+                                          **host_payload({}, context()))
+            self.assertTrue(result["success"], result)
+        p.ctx.message.get_by_id.assert_not_awaited()
+        self.assertEqual(f.cli.created, 2)
+        self.assertEqual(len(p.jobs), 1)
+        self.assertTrue(next(iter(p.jobs.values()))["notify"])
+
+    async def test_pending_and_confirm_reject_untrusted_or_wrong_identity(self):
+        p = self.plugin()
+        with patch("plugins.local_multica.plugin.request") as rpc:
+            for action in ("pending", "plan", "confirm", "cancel"):
+                result = await p.multica_mika(action, stream_id="room", user_id="12345")
+                self.assertFalse(result["success"])
+            rpc.assert_not_called()
+        p.ctx.message.get_by_id.return_value = self.origin(message_info={"user_info": {"user_id": "67890"}})
+        p.config.bridge.allowed_users.append("67890")
+        with patch("plugins.local_multica.plugin.request") as rpc:
+            result = await p.multica_mika("confirm", request_message_id="msg", **host_payload({}, context()))
+            self.assertFalse(result["success"])
+            rpc.assert_not_called()
+
     async def test_reference_queries_survive_restart_and_empty_message_window(self):
         p=self.plugin()
         f=self.bridge()

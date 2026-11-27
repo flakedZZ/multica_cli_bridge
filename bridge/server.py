@@ -141,7 +141,7 @@ class Service:
         if body.get("platform") != "qq" or user not in self.settings.allowed_users:
             raise BridgeError("当前QQ号未获准使用Multica", 403)
         operation = field(body, "operation", 20)
-        if operation not in {"delivery_prepare", "delivery_ack", "file", "verify_file", "close", "health", "artifacts", "image", "submit", "list", "status", "result", "discuss", "plan", "confirm_plan", "cancel_plan"}:
+        if operation not in {"delivery_prepare", "delivery_ack", "file", "verify_file", "close", "health", "artifacts", "image", "submit", "list", "status", "result", "pending", "discuss", "plan", "confirm_plan", "cancel_plan"}:
             raise BridgeError("不支持此操作")
         if not self.lock.acquire(blocking=False):
             active = self.active_request
@@ -157,7 +157,7 @@ class Service:
                 if not isinstance(project, dict) or project.get("id") != self.settings.project_id:
                     raise BridgeError("CLI项目访问校验失败", 502)
                 return {"text": "桥接及持久CLI项目访问正常", "cli_ready": True}
-            if operation in {"discuss", "plan", "confirm_plan", "cancel_plan"}:
+            if operation in {"pending", "discuss", "plan", "confirm_plan", "cancel_plan"}:
                 return self.dialogue.handle(body, user, session)
             if operation == "submit":
                 if not self.settings.allow_direct_submit:

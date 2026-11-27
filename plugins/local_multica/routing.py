@@ -10,9 +10,9 @@ def instruction(mode: str) -> str:
     return (
         "QQ助手任务执行规则：用户直接叫你做事就是任务入口，不需要提到规划Agent、Multica、外包或‘商量’。" + policy +
         "日常闲聊、情感互动和单纯知识问答不因这个规则自动创建任务。"
-        "使用multica_mika：先requests取得真实用户请求消息ID，再discuss说明需求和约束；后续保持同一dialogue_id。"
+        "使用multica_mika：先requests取得真实用户请求消息ID，再discuss说明需求和约束；后续保持同一dialogue_id。重启或中断后用pending分页查询本人本会话未确认讨论，按原dialogue_id调用plan读取完整当前方案，再审核并confirm。不要重新discuss或批量确认；uncertain/confirming需管理员核对。"
         "查询已有任务用status/result带执行编号reference，不要重新discuss或confirm。history从桥接持久记录列出本人本会话最近任务，requests只用于选择消息。"
-        "查询有可信宿主身份时无需request_message_id；若工具提示缺少身份，选择本人当前查询消息的完整ID即可，不必寻找已滑出消息窗口的最初请求。不得用别人的消息代替查询者。"
+        "查询以及plan/confirm/cancel有可信宿主身份时无需request_message_id；若工具提示缺少身份，选择本人当前查询消息的完整ID即可，不必寻找已滑出消息窗口的最初请求。不得用别人的消息代替查询者。"
         "不得因为你自身不会生图或开发就只回复做不到；已获授权的复杂任务应实际调用工具。"
         "你代表用户和规划Agent在内部讨论、审核步骤与验收条件，proposal满足原需求后调用confirm，提供原样dialogue_id、version和review。"
         "只有缺少关键信息或扩大原授权范围时才向用户询问，不要求用户额外说‘和规划Agent商量’或输入命令。"

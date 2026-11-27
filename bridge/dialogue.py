@@ -84,8 +84,39 @@ class Dialogue:
             result["text"] = "本地方案已取消，不能再确认提交。讨论中的规划Agent运行不会被强制中断。"
         return result
 
+    def pending(self, body: Dict[str, Any], user: str, session: str) -> Dict[str, Any]:
+        # Durable discovery only: never poll remote issues or submit on a list.
+        cursor = body.get("cursor", "")
+        if not isinstance(cursor, str) or (cursor and
+                (not re.fullmatch(r"[1-9][0-9]{0,18}", cursor) or int(cursor) > 9223372036854775807)):
+            raise self.error("cursor无效，请原样使用上页next_cursor")
+        with self.service.connect() as db:
+            rows = db.execute(
+                "SELECT rowid AS position, * FROM dialogues WHERE user_id=? AND session_id=? "
+                "AND state NOT IN ('confirmed','cancelled') AND (?=0 OR rowid<?) "
+                "ORDER BY rowid DESC LIMIT 11", (user, session, int(cursor or 0), int(cursor or 0))).fetchall()
+        items = []
+        for row in rows[:10]:
+            plan = json.loads(row["plan"]) if row["plan"] else {}
+            items.append({
+                "dialogue_id": row["id"], "discussion_ref": row["discussion_ref"] or "",
+                "turn_id": row["current_turn"], "state": row["state"], "version": row["version"] or "",
+                "title": str(plan.get("title") or "")[:120], "summary": str(plan.get("reply") or "")[:300],
+                "execution_ref": row["execution_ref"] or "",
+                "next_action": "plan" if row["state"] in {"waiting", "question", "proposal"} else "manual_check",
+            })
+        return {"dialogues": items, "has_more": len(rows) > 10,
+                "next_cursor": str(rows[9]["position"]) if len(rows) > 10 else "",
+                "text": ("当前用户在本会话暂无未确认讨论。" if not items else
+                         "以下为持久保存的未确认讨论，不代表重新授权或自动执行。"
+                         "先用原dialogue_id调用plan读取完整方案；waiting继续查询，question澄清，"
+                         "proposal审核后带原version和review确认。uncertain/confirming需管理员核对，禁止重建。"
+                         "旧需求可能已取消或被新讨论替代，不要批量确认。")}
+
     def handle(self, body: Dict[str, Any], user: str, session: str) -> Dict[str, Any]:
         operation = body["operation"]
+        if operation == "pending":
+            return self.pending(body, user, session)
         if operation == "discuss":
             return self.discuss(body, user, session)
         # The version binds a reviewed plan to one dialogue. Some tool callers

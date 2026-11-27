@@ -8,6 +8,14 @@
 
 这些数据用于防重复，不能当作随时可删除的缓存。
 
+## 重启后找回未确认任务
+
+调用工具 `multica_mika(action="pending")`，从桥接 SQLite 持久记录查询当前用户、当前会话的未确认讨论；不依赖内存或 `mika_pending.json`，也不访问远端、建单或发送消息。每页最多 10 条，按 `has_more/next_cursor` 分页。这里只反映桥接本地状态，远端已关闭或被其他需求替代的旧讨论仍可能出现，不应批量确认。
+
+拿到原 `dialogue_id` 后调用 `plan`：waiting 可继续查询，question 先澄清，proposal 阅读完整方案并确认仍符合原需求后，带原 `version` 与 `review` 调用 confirm。uncertain/confirming 列为 manual_check，先核对已有执行编号及写入结果，不重新 discuss。
+
+pending、plan、confirm、cancel 都接受宿主可信用户身份；缺少可信身份时使用本人当前查询消息即可，不要求最初消息仍在最近消息窗口。讨论归属、版本、审核与原生父子校验继续由桥接执行。恢复确认成功后，插件仍会保存执行结果跟踪并按回执收尾。
+
 ## 常见问题
 
 **查询缺少身份**：无可信调用者的群聊需要当前查询者自己的完整消息 ID。通过宿主按 ID 读取并验证消息；不能使用同群其他人的消息。

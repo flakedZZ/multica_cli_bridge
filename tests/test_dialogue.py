@@ -165,6 +165,63 @@ class DialogueTests(unittest.TestCase):
             self.call(**args, review="approved")
         self.assertEqual(len(self.cli.calls), calls)
 
+    def test_pending_survives_restart_and_is_read_only_scoped(self):
+        plan = self.proposal()
+        self.service = Service(self.settings, self.cli)
+        before = len(self.cli.calls)
+        result = self.call(operation="pending")
+        self.assertFalse(result["has_more"])
+        self.assertEqual(result["dialogues"][0]["dialogue_id"], plan["dialogue_id"])
+        self.assertEqual(result["dialogues"][0]["version"], plan["version"])
+        self.assertEqual(result["dialogues"][0]["next_action"], "plan")
+        for scope in ({"user_id": "67890"}, {"session_id": "other"}):
+            self.assertEqual(self.call(operation="pending", **scope)["dialogues"], [])
+        self.assertEqual(len(self.cli.calls), before)
+        self.assertEqual(self.cli.created, 1)
+
+    def test_pending_pagination_and_terminal_filter(self):
+        with self.service.connect() as db:
+            for i in range(25):
+                db.execute("INSERT INTO dialogues (id,user_id,session_id,current_turn,state) "
+                           "VALUES (?,?,?,'turn','waiting')", (str(i), "12345", "room"))
+            for state in ("confirmed", "cancelled", "uncertain", "confirming", "question"):
+                db.execute("INSERT INTO dialogues (id,user_id,session_id,current_turn,state) "
+                           "VALUES (?,?,?,'turn',?)", (state, "12345", "room", state))
+        ids, cursor = [], ""
+        while True:
+            result = self.call(operation="pending", cursor=cursor)
+            self.assertLessEqual(len(result["dialogues"]), 10)
+            ids.extend(r["dialogue_id"] for r in result["dialogues"])
+            for row in result["dialogues"]:
+                if row["state"] in {"uncertain", "confirming"}:
+                    self.assertEqual(row["next_action"], "manual_check")
+            if not result["has_more"]:
+                self.assertEqual(result["next_cursor"], "")
+                break
+            cursor = result["next_cursor"]
+        self.assertEqual(len(ids), 28)
+        self.assertEqual(len(set(ids)), 28)
+        self.assertNotIn("confirmed", ids)
+        self.assertNotIn("cancelled", ids)
+        self.assertEqual(self.cli.calls, [])
+
+    def test_pending_rejects_invalid_cursor(self):
+        for cursor in (None, 1, "-1", "0", "1 OR 1=1", "9" * 20, "9223372036854775808"):
+            with self.subTest(cursor=cursor), self.assertRaises(BridgeError):
+                self.call(operation="pending", cursor=cursor)
+
+    def test_pending_to_plan_to_confirm_after_restart(self):
+        conversation = self.call()["dialogue_id"]
+        self.reply(conversation)
+        self.service = Service(self.settings, self.cli)
+        row = self.call(operation="pending")["dialogues"][0]
+        self.assertEqual(row["state"], "waiting")
+        plan = self.call(operation="plan", dialogue_id=row["dialogue_id"])
+        self.call(operation="confirm_plan", dialogue_id=conversation,
+                  version=plan["version"], review="原范围已审核")
+        self.assertEqual(self.call(operation="pending")["dialogues"], [])
+        self.assertEqual(self.cli.created, 2)
+
     def test_question_cannot_be_confirmed(self):
         conversation = self.call()["dialogue_id"]
         self.reply(conversation, state="question")

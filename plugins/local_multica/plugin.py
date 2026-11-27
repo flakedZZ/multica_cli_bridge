@@ -11,6 +11,7 @@ from .client import BridgeBusyError, ClientError, HELP, parse, request
 from .delivery import DeliveryStore, verify_payload
 from .routing import inject
 from .completion import Completion
+from .dialogues import DialogueBindings
 from .qq_files import QQFiles, decode_file
 from .polling import PollingSettings, TASK_TYPES, validate_changes
 from .inputs import collect as collect_inputs
@@ -18,7 +19,7 @@ from .inputs import collect as collect_inputs
 
 class PluginSection(PluginConfigBase):
     enabled: bool = Field(default=True, description="启用Multica任务命令")
-    config_version: str = Field(default="1.6.1", description="配置版本")
+    config_version: str = Field(default="1.6.2", description="配置版本")
 
 
 class BridgeSection(PluginConfigBase):
@@ -62,6 +63,7 @@ class MulticaPlugin(MaiBotPlugin):
         self.delivery_store = None
         self.delivery_lock = asyncio.Lock()
         self.rpc_lock = asyncio.Lock()
+        self.dialogue_bindings = None
         self.acceptance = None
         self.completion = None
         self.qq_files = None
@@ -139,8 +141,63 @@ class MulticaPlugin(MaiBotPlugin):
             await self.save_jobs()
 
     async def rpc(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        # Serialize resolution, remote calls and durable binding writes together.
+        # A concurrent discuss/poller cannot overwrite a newer response locally.
         async with self.rpc_lock:
-            return await asyncio.to_thread(request, self.config.bridge.url, self.config.bridge.token_file, payload)
+            if self.dialogue_bindings is None:
+                self.dialogue_bindings = await asyncio.to_thread(
+                    DialogueBindings, self.ctx.paths.data_dir / "dialogue_bindings.sqlite3")
+            if payload.get("operation") == "confirm_plan":
+                payload["dialogue_id"] = await self.resolve_confirmation(payload)
+            return await self.bound_request(payload)
+
+    async def bound_request(self, payload):
+        result = await asyncio.to_thread(request, self.config.bridge.url, self.config.bridge.token_file, payload)
+        if payload.get("operation") in {"discuss", "plan", "confirm_plan", "cancel_plan"}:
+            await asyncio.to_thread(self.dialogue_bindings.remember, payload, result)
+        return result
+
+    async def resolve_confirmation(self, payload):
+        version, review = payload.get("version"), payload.get("review")
+        if not isinstance(version, str) or not version.strip() or len(version) > 2000:
+            raise ClientError("confirm必须提供已审核方案的原样version；请先plan读取方案")
+        if not isinstance(review, str) or not review.strip() or len(review) > 2000:
+            raise ClientError("QQbot必须提供对方案的审核意见（最多2000字）")
+        selected = payload.get("dialogue_id", "")
+        if not isinstance(selected, str):
+            raise ClientError("dialogue_id格式无效")
+        if not selected:
+            selected = await asyncio.to_thread(self.dialogue_bindings.resolve, payload)
+        if not selected:
+            # Upgrade/recovery: use the existing scoped pending API, all pages.
+            # Do not interpret a partial page or a summary as approval.
+            cursor, seen, matches = "", set(), set()
+            for _ in range(100):
+                result = await self.bound_request({**payload, "operation": "pending", "cursor": cursor})
+                matches.update(row["dialogue_id"] for row in result.get("dialogues", [])
+                               if row.get("version") == version)
+                if not result.get("has_more"):
+                    break
+                cursor = result.get("next_cursor")
+                if not cursor or cursor in seen:
+                    raise ClientError("未确认任务分页无效；请pending查询并明确选择原dialogue_id")
+                seen.add(cursor)
+            else:
+                raise ClientError("未确认任务过多；请pending查询并明确选择原dialogue_id")
+            if len(matches) != 1:
+                raise ClientError("无法唯一定位已审核版本；请pending选择原讨论，再plan读取审核，勿重建")
+            selected = matches.pop()
+        # Server verifies ownership using trusted payload identity, even for an
+        # explicit model-selected ID. Refresh catches cancellation/new turns;
+        # confirm rechecks the version if another client changes it afterward.
+        current = await self.bound_request({**payload, "operation": "plan", "dialogue_id": selected})
+        if current.get("dialogue_id") != selected or current.get("version") != version:
+            raise ClientError("方案版本已变化，请plan重新读取并审核；不能确认旧版本")
+        if current.get("state") not in {"proposal", "confirmed", "uncertain", "confirming"}:
+            raise ClientError("尚无可确认方案，请plan读取当前状态")
+        # Uncertain requests go to the existing server idempotency guard: a
+        # known execution is read back, an unknown create is never repeated.
+        return selected
 
     def delivery_settings(self, job: Dict[str, Any]) -> Dict[str, int]:
         if self.polling is None:
@@ -440,7 +497,7 @@ class MulticaPlugin(MaiBotPlugin):
                 f"原请求消息完整ID：{pending['message_id']}。"
                 "你是QQ助手，用户直接把任务交给你。你负责在内部审阅方案是否满足原意，不要求用户提到规划Agent。若需关键补充信息，用自然语言询问用户；"
                 "若需调整方案，调用multica_mika(action='discuss', dialogue_id=原讨论ID, message=你的反馈)。"
-                "只有state=proposal且你已经核对范围、步骤和验收条件后，才调用confirm，带原样dialogue_id、version和review审核意见。"
+                "只有state=proposal且你已经核对范围、步骤和验收条件后，才调用confirm，带原样version和review审核意见；dialogue_id由插件按可信会话和版本自动补齐。"
                 "这是由你确认的QQbot内部审核，需求明确且在原授权内就接续执行，无需用户再次确认。涉及新增支出、部署、对外发送等超出原授权的内容应先向用户确认。"
                 "确认前不得声称执行任务已经提交。confirm成功后自然语言告知进度，图片和结果由插件自动回传，勿重复发送图片。"
                 "若state=uncertain则告诉用户待管理员核对，不要重新创建。"
@@ -495,7 +552,7 @@ class MulticaPlugin(MaiBotPlugin):
                                 enum_values=["requests", "history", "pending", "discuss", "plan", "confirm", "cancel", "status", "result", "settings", "configure"]),
               ToolParameterInfo(name="request_message_id", param_type=ToolParamType.STRING, default="", required=False, description="真实用户消息ID；status/result/history/pending/plan/confirm/cancel有可信宿主身份时可省略，否则可用本人当前查询消息，不必找最初请求；其他操作除requests外必填"),
               ToolParameterInfo(name="message", param_type=ToolParamType.STRING, default="", required=False, description="对规划Agent的自然语言需求或方案修改意见"),
-              ToolParameterInfo(name="dialogue_id", param_type=ToolParamType.STRING, default="", required=False, description="首次discuss留空；plan/confirm/cancel及后续discuss带原讨论ID"),
+              ToolParameterInfo(name="dialogue_id", param_type=ToolParamType.STRING, default="", required=False, description="首次discuss留空；plan/cancel及后续discuss带原讨论ID；confirm可省略，由插件按本人本会话及准确version定位；显式ID仍校验归属和版本"),
               ToolParameterInfo(name="cursor", param_type=ToolParamType.STRING, default="", required=False, description="pending分页：首次留空，有has_more时原样传next_cursor继续查询"),
               ToolParameterInfo(name="version", param_type=ToolParamType.STRING, default="", required=False, description="confirm必须原样传回最新方案version"),
               ToolParameterInfo(name="review", param_type=ToolParamType.STRING, default="", required=False, description="QQbot审核方案符合用户意图的理由；confirm必填"),
@@ -540,7 +597,7 @@ class MulticaPlugin(MaiBotPlugin):
                 payload = await self.query_origin(session, request_message_id, context)
             else:
                 payload = await self.origin(session, request_message_id, (action == "discuss" and not dialogue_id) or action == "configure",
-                                            str(kwargs.get("user_id") or ""))
+                                            str(context.get("user_id") or "") if isinstance(context, dict) else "")
             if action in {"history", "pending"}:
                 result = await self.rpc({**payload, "operation": "list" if action == "history" else "pending", "cursor": cursor})
                 return {"success": True, "content": json.dumps(result, ensure_ascii=False)}

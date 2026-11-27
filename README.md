@@ -145,6 +145,8 @@ python scripts/probe_bridge.py --plugin-config /MaiMBot/plugins/local_multica/co
 requests → discuss → plan → confirm → 自动交付
 ```
 
+`confirm` 只需准确的方案 `version` 和 `review`；插件从可信用户、会话和持久关联自动携带 `dialogue_id`。多个任务不会按最近一条猜测，有歧义时明确选择原讨论并重新读取审核。显式 ID 仍校验归属及版本。
+
 `requests` 用于选择真实用户消息，`history` 列出本人当前会话的最近执行任务。
 
 重启后可直接说“查一下还有哪些任务没确认，继续之前中断的任务”。QQ 助手用 `pending` 查询桥接数据库中的未确认讨论（每页 10 条），返回原讨论编号、`dialogue_id`、状态、版本和摘要；`has_more=true` 时带 `next_cursor` 继续查询。随后对选中的原讨论调用 `plan` 读取完整方案，审核后 `confirm`，不重新创建讨论。查询不会自动确认；已确认/已取消讨论不列出，结果未知的请求标为需要人工核对。

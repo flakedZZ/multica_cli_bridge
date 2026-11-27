@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "local.multica",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "name": "Multica 任务桥接",
   "description": "将完整文字、图片及普通文件交付到原QQ会话，凭平台成功回执收尾。",
   "author": {
